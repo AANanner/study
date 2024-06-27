@@ -1,0 +1,419 @@
+package codeDemo;
+
+import javax.swing.*;
+import java.awt.*;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Timer;
+import java.util.TimerTask;
+import com.fazecast.jSerialComm.SerialPort;
+
+public class LightControlPanel extends JFrame {
+    private LightController lights;
+    private final int ledCNT = 3; // LED的数量
+    private boolean[] ledStatus = new boolean[ledCNT];
+    private boolean allLedStatus = false;
+    private Timer timer;
+    private Timer flowLightTimer;
+    private Timer countdownTimer; // 倒计时计时器
+    private boolean isFlowLightRunning = false;
+    private int flowLightSpeed = 1000; // 默认速度
+    private JComboBox<String> comPortComboBox;
+    private JButton openPortButton, closePortButton;
+    private JButton[] ledButtons = new JButton[ledCNT];
+    private JLabel timeLabel, countdownLabel;
+    private JTextField hourField, minuteField, secondField;
+    private JButton setOnTimerButton, setOffTimerButton, cancelTimerButton;
+    private JComboBox<String> speedComboBox;
+
+    public LightControlPanel() {
+        // 初始化 LightController
+        lights = new LightController();
+
+        // 设置窗口
+        setTitle("第19组");
+        setBounds(200, 20, 1000, 700);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLayout(null);
+
+        // 创建并设置背景面板
+        BackgroundPanel backgroundPanel = new BackgroundPanel(new ImageIcon("background.jpg").getImage());
+        setContentPane(backgroundPanel);
+        backgroundPanel.setLayout(null);
+
+        // 当前时间显示
+        timeLabel = new JLabel();
+        timeLabel.setFont(new Font("SansSerif", Font.BOLD, 25));
+        timeLabel.setBounds(400, 30, 300, 200);
+        backgroundPanel.add(timeLabel);
+        startClock();
+
+        // 倒计时显示
+        countdownLabel = new JLabel();
+        countdownLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        countdownLabel.setBounds(400, 80, 300, 200);
+        backgroundPanel.add(countdownLabel);
+
+        // 定时设置
+        JLabel timerLabel = new JLabel("定时");
+        timerLabel.setBounds(300, 450, 50, 30);
+        backgroundPanel.add(timerLabel);
+
+        hourField = new JTextField("00");
+        hourField.setBounds(350, 450, 30, 30);
+        backgroundPanel.add(hourField);
+
+        minuteField = new JTextField("00");
+        minuteField.setBounds(390, 450, 30, 30);
+        backgroundPanel.add(minuteField);
+
+        secondField = new JTextField("00");
+        secondField.setBounds(430, 450, 30, 30);
+        backgroundPanel.add(secondField);
+
+        setOnTimerButton = new JButton("定时开");
+        setOnTimerButton.setBounds(470, 450, 80, 30);
+        backgroundPanel.add(setOnTimerButton);
+        setOnTimerButton.addActionListener(e -> startTimer(true));
+
+        cancelTimerButton = new JButton("取消定时");
+        cancelTimerButton.setBounds(570, 450, 100, 30);
+        backgroundPanel.add(cancelTimerButton);
+        cancelTimerButton.addActionListener(e -> cancelTimer());
+
+        // LED控制按钮
+        for (int i = 0; i < ledCNT; i++) {
+            ledButtons[i] = new JButton(new ImageIcon("led_off.jpg"));
+            ledButtons[i].setBounds(160 + (i * 250), 200, 183, 175);
+            backgroundPanel.add(ledButtons[i]);
+            int index = i;
+            ledButtons[i].addActionListener(e -> toggleLed(index));
+        }
+
+        // 串口设置
+        JLabel portLabel = new JLabel("串口设置");
+        portLabel.setBounds(50, 500, 100, 30);
+        backgroundPanel.add(portLabel);
+
+        comPortComboBox = new JComboBox<>();
+        comPortComboBox.setBounds(150, 500, 200, 30);
+        backgroundPanel.add(comPortComboBox);
+
+        // 动态填充COM串口
+        SerialPort[] ports = SerialPort.getCommPorts();
+        for (SerialPort port : ports) {
+            comPortComboBox.addItem(port.getSystemPortName());
+        }
+
+        openPortButton = new JButton("打开串口");
+        openPortButton.setBounds(400, 500, 100, 30);
+        backgroundPanel.add(openPortButton);
+        openPortButton.addActionListener(e -> openSerialPort());
+
+        closePortButton = new JButton("关闭串口");
+        closePortButton.setBounds(600, 500, 100, 30);
+        backgroundPanel.add(closePortButton);
+        closePortButton.addActionListener(e -> closeSerialPort());
+
+        // 全亮按钮与流水灯按钮
+        JButton allLedsButton = new JButton("全亮");
+        allLedsButton.setBounds(50, 600, 100, 30);
+        backgroundPanel.add(allLedsButton);
+        allLedsButton.addActionListener(e -> toggleAllLeds());
+
+        JButton flowLightSpeedButton = new JButton("流水灯速度");
+        flowLightSpeedButton.setBounds(150, 600, 150, 30);
+        backgroundPanel.add(flowLightSpeedButton);
+
+        speedComboBox = new JComboBox<>(new String[]{"慢速", "快速"});
+        speedComboBox.setBounds(310, 600, 150, 30);
+        backgroundPanel.add(speedComboBox);
+
+        JButton openFlowLightButton = new JButton("打开流水灯");
+        openFlowLightButton.setBounds(470, 600, 150, 30);
+        backgroundPanel.add(openFlowLightButton);
+        openFlowLightButton.addActionListener(e -> startFlowLight());
+
+        JButton closeFlowLightButton = new JButton("关闭流水灯");
+        closeFlowLightButton.setBounds(630, 600, 150, 30);
+        backgroundPanel.add(closeFlowLightButton);
+        closeFlowLightButton.addActionListener(e -> stopFlowLight());
+
+        // 可视化
+        setVisible(true);
+    }
+
+    // 获得网络时间
+    private void startClock() {
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                SwingUtilities.invokeLater(() -> {
+                    SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss");
+                    timeLabel.setText("当前时间: " + sdf.format(new Date()));
+                });
+            }
+        }, 0, 1000);
+    }
+
+    // 定时功能的实现
+    private void startTimer(boolean isOnTimer) {
+        try {
+            int hours = Integer.parseInt(hourField.getText());
+            int minutes = Integer.parseInt(minuteField.getText());
+            int seconds = Integer.parseInt(secondField.getText());
+            int targetSeconds = (hours * 3600 + minutes * 60 + seconds);
+            int currentSeconds = getCurrentSeconds();
+
+            if (targetSeconds < currentSeconds) {
+                JOptionPane.showMessageDialog(this, "请提供有效的时间值");
+                return;
+            }
+
+            int delay = (targetSeconds - currentSeconds) * 1000;
+
+            if (timer != null) {
+                timer.cancel();
+            }
+            if (countdownTimer != null) {
+                countdownTimer.cancel();
+            }
+
+            timer = new Timer();
+            countdownTimer = new Timer();
+
+            timer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    for (int i = 0; i < ledCNT; i++) {
+                        if (isOnTimer) {
+                            ledButtons[i].setIcon(new ImageIcon("led_on.jpg"));
+                            lights.setLed(i + 1, 1);
+                            ledStatus[i] = true;
+                        } else {
+                            ledButtons[i].setIcon(new ImageIcon("led_off.jpg"));
+                            lights.setLed(i + 1, 0);
+                            ledStatus[i] = false;
+                        }
+                    }
+                }
+            }, delay);
+
+            countdownTimer.scheduleAtFixedRate(new TimerTask() {
+                int remainingSeconds = targetSeconds - currentSeconds;
+
+                @Override
+                public void run() {
+                    if (remainingSeconds > 0) {
+                        remainingSeconds--;
+                        SwingUtilities.invokeLater(() -> countdownLabel.setText("剩余时间: " + formatSeconds(remainingSeconds)));
+                    } else {
+                        countdownTimer.cancel();
+                    }
+                }
+            }, 0, 1000);
+
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, "请提供有效的时间值");
+        }
+    }
+
+    private void cancelTimer() {
+        if (timer != null) {
+            timer.cancel();
+        }
+        if (countdownTimer != null) {
+            countdownTimer.cancel();
+        }
+        countdownLabel.setText("");
+        JOptionPane.showMessageDialog(this, "定时取消");
+    }
+
+    private int getCurrentSeconds() {
+        String currentTime = new SimpleDateFormat("HH:mm:ss").format(new Date());
+        String[] parts = currentTime.split(":");
+        int currentSeconds = Integer.parseInt(parts[0]) * 3600 + Integer.parseInt(parts[1]) * 60 + Integer.parseInt(parts[2]);
+        return currentSeconds;
+    }
+
+    private String formatSeconds(int totalSeconds) {
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds);
+    }
+
+    // 图片按钮的实现
+    private void toggleLed(int index) {
+        if (ledStatus[index]) {
+            ledButtons[index].setIcon(new ImageIcon("led_off.jpg"));
+            lights.setLed(index + 1, 0);
+            ledStatus[index] = false;
+        } else {
+            ledButtons[index].setIcon(new ImageIcon("led_on.jpg"));
+            lights.setLed(index + 1, 1);
+            ledStatus[index] = true;
+        }
+    }
+
+    // 全亮
+    private void toggleAllLeds() {
+        if (allLedStatus) {
+            for (int i = 0; i < ledCNT; i++) {
+                ledButtons[i].setIcon(new ImageIcon("led_off.jpg"));
+                lights.setLed(i + 1, 0);
+                ledStatus[i] = false;
+            }
+            allLedStatus = false;
+        } else {
+            for (int i = 0; i < ledCNT; i++) {
+                ledButtons[i].setIcon(new ImageIcon("led_on.jpg"));
+                lights.setLed(i + 1, 1);
+                ledStatus[i] = true;
+            }
+            allLedStatus = true;
+        }
+    }
+
+    // 流水灯的实现
+    private void startFlowLight() {
+        if (isFlowLightRunning) {
+            return;
+        }
+
+        isFlowLightRunning = true;
+
+        int delay = speedComboBox.getSelectedItem().equals("快速") ? 300 : 500;
+        // 流水灯快慢的选择
+        flowLightTimer = new Timer();
+        flowLightTimer.scheduleAtFixedRate(new TimerTask() {
+            private int currentIndex = 0;
+
+            @Override
+            public void run() {
+                if (!isFlowLightRunning) {
+                    flowLightTimer.cancel();
+                    return;
+                }
+
+                for (int i = 0; i < ledCNT; i++) {
+                    if (i == currentIndex) {
+                        ledButtons[i].setIcon(new ImageIcon("led_on.jpg"));
+                        lights.setLed(i + 1, 1);
+                    } else {
+                        ledButtons[i].setIcon(new ImageIcon("led_off.jpg"));
+                        lights.setLed(i + 1, 0);
+                    }
+                }
+
+                currentIndex = (currentIndex + 1) % ledCNT;
+            }
+        }, 0, delay);
+    }
+
+    private void stopFlowLight() {
+        if (isFlowLightRunning) {
+            isFlowLightRunning = false;
+            if (flowLightTimer != null) {
+                flowLightTimer.cancel();
+            }
+            // Turn off all LEDs when stopping the flow light
+            for (int i = 0; i < ledCNT; i++) {
+                ledButtons[i].setIcon(new ImageIcon("led_off.jpg"));
+                lights.setLed(i + 1, 0);
+                ledStatus[i] = false;
+            }
+        }
+    }
+
+    // 串口的打开和关闭
+    private void openSerialPort() {
+        String selectedPort = comPortComboBox.getSelectedItem().toString();
+        lights.setComPort(selectedPort, 9600);
+    }
+
+    private void closeSerialPort() {
+        lights.closePort();
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(LightControlPanel::new);
+    }
+}
+
+class LightController {
+    private SerialPort sp;
+
+    public LightController() {
+
+    }
+
+    public void setComPort(String comPort, int baudRate) {
+        if (sp != null && sp.isOpen()) {
+            sp.closePort();
+        }
+
+        sp = SerialPort.getCommPort(comPort);
+        if (sp == null) {
+            System.out.println("无法获取串口对象：" + comPort);
+            return;
+        }
+
+        sp.setBaudRate(baudRate);
+
+        if (!sp.isOpen()) {
+            if (sp.openPort()) {
+                System.out.println("串口打开成功：" + sp.getSystemPortName());
+            } else {
+                System.out.println("无法打开串口：" + sp.getSystemPortName());
+                System.out.println("错误描述：" + sp.getDescriptivePortName());
+                System.out.println("错误详情：" + sp.getLastErrorCode());
+            }
+        }
+    }
+
+    public void closePort() {
+        if (sp != null && sp.isOpen()) {
+            sp.closePort();
+            System.out.println("串口已关闭：" + sp.getSystemPortName());
+        }
+    }
+
+    public void setLed(int ledNumber, int status) {
+        if (sp == null || !sp.isOpen()) {
+            System.out.println("串口未打开，无法发送数据。");
+            return;
+        }
+
+        byte[] bytes = new byte[1];
+        switch (ledNumber) {
+            case 1:
+                bytes[0] = (status == 1) ? (byte) 0x11 : (byte) 0x10;
+                break;
+            case 2:
+                bytes[0] = (status == 1) ? (byte) 0x21 : (byte) 0x20;
+                break;
+            case 3:
+                bytes[0] = (status == 1) ? (byte) 0x31 : (byte) 0x30;
+                break;
+        }
+
+        sp.writeBytes(bytes, 1);
+        System.out.println("发送数据到串口：" + sp.getSystemPortName());
+    }
+}
+
+class BackgroundPanel extends JPanel {
+    private Image backgroundImage;
+
+    public BackgroundPanel(Image backgroundImage) {
+        this.backgroundImage = backgroundImage;
+    }
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        g.drawImage(backgroundImage, 0, 0, 1000, 700, this);
+    }
+}
